@@ -1,0 +1,37 @@
+# --- Secrets (ne JAMAIS versionner) ---
+.env
+*.env
+!.env.example
+keys/
+*creds*.json
+*credentials*.json
+service-account*.json
+
+# --- Terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- dbt ---
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# --- Airflow ---
+orchestration/logs/
+
+# --- Données locales ---
+data/
+
+# --- Divers ---
+.DS_Store
+.vscode/
