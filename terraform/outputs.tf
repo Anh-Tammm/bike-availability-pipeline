@@ -9,3 +9,11 @@ output "datasets" {
 output "pipeline_service_account" {
   value = google_service_account.pipeline.email
 }
+
+output "collector_image" {
+  value = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.containers.repository_id}/collector:latest"
+}
+
+output "state_bucket" {
+  value = google_storage_bucket.state.name
+}

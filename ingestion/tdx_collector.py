@@ -30,7 +30,49 @@ FEEDS = {
     "availability": "Availability/City/{city}",
     "station": "Station/City/{city}",
 }
-TOKEN_CACHE = Path.home() / ".cache" / "bike-pipeline" / "tdx_token.json"
+
+# Local file by default; set TDX_TOKEN_CACHE=gs://bucket/path.json on Cloud Run
+# (the container disk is wiped after each execution).
+TOKEN_CACHE = os.environ.get(
+    "TDX_TOKEN_CACHE", str(Path.home() / ".cache" / "bike-pipeline" / "tdx_token.json")
+)
+
+
+def _gcs_blob():
+    from google.cloud import storage
+    return storage.Blob.from_string(TOKEN_CACHE, client=storage.Client(project=os.environ.get("GCP_PROJECT_ID")))
+
+
+def read_cache() -> dict | None:
+    """Return the cached token, or None if missing/unreadable (we then fetch a new one)."""
+    try:
+        if TOKEN_CACHE.startswith("gs://"):
+            return json.loads(_gcs_blob().download_as_bytes())
+        path = Path(TOKEN_CACHE)
+        return json.loads(path.read_text()) if path.exists() else None
+    except Exception:
+        return None
+
+
+def write_cache(content: dict) -> None:
+    data = json.dumps(content)
+    if TOKEN_CACHE.startswith("gs://"):
+        _gcs_blob().upload_from_string(data, content_type="application/json")
+        return
+    path = Path(TOKEN_CACHE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(mode=0o600, exist_ok=True)
+    path.write_text(data)
+
+
+def clear_cache() -> None:
+    try:
+        if TOKEN_CACHE.startswith("gs://"):
+            _gcs_blob().delete()
+        else:
+            Path(TOKEN_CACHE).unlink(missing_ok=True)
+    except Exception:
+        pass
 
 log = logging.getLogger("tdx_collector")
 
@@ -40,10 +82,9 @@ def get_token(session) -> str:
 
     Tokens last ~24h: caching avoids one auth request per run, as TDX recommends.
     """
-    if TOKEN_CACHE.exists():
-        cached = json.loads(TOKEN_CACHE.read_text())
-        if cached["expires_at"] > time.time() + 600:  # 10-minute safety margin
-            return cached["access_token"]
+    cached = read_cache()
+    if cached and cached["expires_at"] > time.time() + 600:  # 10-minute safety margin
+        return cached["access_token"]
 
     resp = session.post(
         TOKEN_URL,
@@ -56,16 +97,9 @@ def get_token(session) -> str:
     )
     resp.raise_for_status()
     body = resp.json()
-
-    TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_CACHE.touch(mode=0o600, exist_ok=True)  # readable by you only
-    TOKEN_CACHE.write_text(json.dumps({
-        "access_token": body["access_token"],
-        "expires_at": time.time() + body["expires_in"],
-    }))
+    write_cache({"access_token": body["access_token"], "expires_at": time.time() + body["expires_in"]})
     log.info("New TDX token obtained (valid %.0f h)", body["expires_in"] / 3600)
     return body["access_token"]
-
 
 def fetch_feed(session, token: str, city: str, feed: str) -> bytes:
     """Call one TDX endpoint and check the payload looks like a station list."""
@@ -73,7 +107,7 @@ def fetch_feed(session, token: str, city: str, feed: str) -> bytes:
     resp = session.get(url, params={"$format": "JSON"},
                        headers={"authorization": f"Bearer {token}"}, timeout=30)
     if resp.status_code == 401:
-        TOKEN_CACHE.unlink(missing_ok=True)  # force a fresh token on next run
+        clear_cache()  # force a fresh token on next run
     resp.raise_for_status()
     payload = json.loads(resp.content)
     if not isinstance(payload, list) or not payload or "StationUID" not in payload[0]:
