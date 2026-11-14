@@ -25,7 +25,9 @@ resource "google_storage_bucket" "raw" {
   # refuse to destroy a non-empty bucket
   force_destroy = false
 
- 
+  # No storage-class transition: with many small files, per-object
+  # transition operations would cost more than the storage savings.
+}
 
 # ---------- Data warehouse: one dataset per layer ----------
 resource "google_bigquery_dataset" "layers" {
