@@ -35,3 +35,4 @@ data/
 # --- Divers ---
 .DS_Store
 .vscode/
+logs/
