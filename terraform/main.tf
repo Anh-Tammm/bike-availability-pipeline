@@ -25,17 +25,7 @@ resource "google_storage_bucket" "raw" {
   # refuse to destroy a non-empty bucket
   force_destroy = false
 
-  # After 30 days, move files to a cheaper storage class
-  lifecycle_rule {
-    condition {
-      age = 30
-    }
-    action {
-      type          = "SetStorageClass"
-      storage_class = "NEARLINE"
-    }
-  }
-}
+ 
 
 # ---------- Data warehouse: one dataset per layer ----------
 resource "google_bigquery_dataset" "layers" {
