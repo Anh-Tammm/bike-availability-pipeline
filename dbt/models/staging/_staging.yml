@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stg_youbike__availability
+    description: One row per YouBike Hsinchu station per snapshot (every 20 min). Timestamps in UTC.
+    columns: &availability_columns
+      - name: snapshot_id
+        description: station_uid + snapshot time. Primary key.
+        data_tests: [unique, not_null]
+      - name: station_uid
+        data_tests: [not_null]
+      - name: collected_at
+        description: Collection time (UTC).
+        data_tests: [not_null]
+      - name: bikes_available
+        data_tests: [not_null, non_negative]
+      - name: docks_available
+        data_tests: [not_null, non_negative]
+
+  - name: stg_velib__station_status
+    description: One row per Vélib' station per snapshot (every 5 min). Timestamps in UTC.
+    columns: *availability_columns
