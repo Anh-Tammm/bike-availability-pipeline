@@ -1,0 +1,13 @@
+# No secrets here: "oauth" reuses your gcloud ADC login (same as Terraform and Airflow).
+bike_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: staging
+      location: europe-west1
+      threads: 4
+      job_execution_timeout_seconds: 300
+      maximum_bytes_billed: 10000000000  # 10 GB safety cap per query

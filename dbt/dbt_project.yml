@@ -1,0 +1,19 @@
+name: bike_pipeline
+version: "1.0.0"
+profile: bike_pipeline
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  bike_pipeline:
+    staging:
+      +schema: staging
+    intermediate:
+      +schema: staging
+    marts:
+      +schema: marts
+      +materialized: table
