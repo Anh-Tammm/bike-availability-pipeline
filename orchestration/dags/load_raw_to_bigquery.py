@@ -1,4 +1,4 @@
-"""Load raw collector snapshots from GCS into BigQuery (one row per file).
+"""Load raw collector snapshots from GCS into BigQuery, then run dbt.
 
 Every hour, for each feed, loads the files of that hour
 (gs://<bucket>/<prefix>/dt=YYYY-MM-DD/hh=HH/*.json.gz) into raw.<table>.
@@ -6,6 +6,9 @@ Every hour, for each feed, loads the files of that hour
 Idempotent: files are loaded into a temporary table, then a MERGE on
 source_file inserts only the files not loaded yet. Re-running an hour
 (retry, backfill, clear) never creates duplicates.
+
+After the loads, the most recent run only (not every catch-up run)
+executes dbt build and dbt source freshness.
 """
 import gzip
 import io
@@ -13,6 +16,8 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
+from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.standard.operators.latest_only import LatestOnlyOperator
 from airflow.sdk import dag, get_current_context, task
 from airflow.timetables.interval import CronDataIntervalTimetable
 
@@ -29,6 +34,12 @@ RAW_SCHEMA = [
     ("payload", "JSON"),
 ]
 
+# dbt writes artifacts to /tmp so it never clobbers your local dbt/target folder
+DBT_CMD = (
+    "cd /opt/airflow/dbt && /opt/airflow/dbt-venv/bin/dbt {cmd} "
+    "--target-path /tmp/dbt-target --log-path /tmp/dbt-logs"
+)
+
 
 @dag(
     # Explicit hourly data intervals [HH:00, HH+1:00) in UTC, aligned with the hh= folders
@@ -37,7 +48,7 @@ RAW_SCHEMA = [
     catchup=True,  # when Airflow restarts, every missed hour is loaded
     max_active_runs=4,
     default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
-    tags=["raw", "bigquery"],
+    tags=["raw", "bigquery", "dbt"],
     doc_md=__doc__,
 )
 def load_raw_to_bigquery():
@@ -108,7 +119,25 @@ def load_raw_to_bigquery():
         return inserted
 
     # Dynamic task mapping: one task instance per feed, visible separately in the UI
-    load_feed.expand(feed=FEEDS)
+    loads = load_feed.expand(feed=FEEDS)
+
+    # During a catch-up, only the most recent run transforms the data
+    latest_only = LatestOnlyOperator(task_id="latest_only")
+
+    dbt_build = BashOperator(
+        task_id="dbt_build",
+        bash_command=DBT_CMD.format(cmd="build"),
+        max_active_tis_per_dag=1,  # never two dbt runs on the same tables
+    )
+
+    # Detects a stopped collection (Cloud Run); fails without blocking dbt_build
+    dbt_freshness = BashOperator(
+        task_id="dbt_source_freshness",
+        bash_command=DBT_CMD.format(cmd="source freshness"),
+        max_active_tis_per_dag=1,
+    )
+
+    loads >> latest_only >> [dbt_build, dbt_freshness]
 
 
 load_raw_to_bigquery()

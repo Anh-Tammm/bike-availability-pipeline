@@ -1,0 +1,3 @@
+# Whitelist: only send what the Airflow image needs to the Docker build
+*
+!dbt/requirements.txt

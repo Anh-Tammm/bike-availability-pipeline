@@ -15,7 +15,7 @@ with source as (
     from {{ source('raw', 'youbike_availability') }}
     {% if is_incremental() %}
     -- only reprocess the last 2 days (partition pruning on the raw table)
-    where collected_at >= timestamp(date_sub(current_date(), interval 2 day))
+    where collected_at >= timestamp(date_sub(current_date(), interval {{ var('lookback_days', 2) }} day))
     {% endif %}
 
 ),

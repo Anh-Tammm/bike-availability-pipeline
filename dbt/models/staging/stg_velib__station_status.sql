@@ -14,7 +14,7 @@ with source as (
     select collected_at, payload
     from {{ source('raw', 'velib_station_status') }}
     {% if is_incremental() %}
-    where collected_at >= timestamp(date_sub(current_date(), interval 2 day))
+    where collected_at >= timestamp(date_sub(current_date(), interval {{ var('lookback_days', 2) }} day))
     {% endif %}
 
 ),

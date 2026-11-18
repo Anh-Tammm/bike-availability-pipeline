@@ -27,5 +27,5 @@ select
     docks_available = 0  as is_full     -- no dock to return a bike
 from {{ ref('int_station_snapshots') }}
 {% if is_incremental() %}
-where snapshot_date >= date_sub(current_date(), interval 2 day)
+where snapshot_date >= date_sub(current_date(), interval {{ var('lookback_days', 2) }} day)
 {% endif %}
