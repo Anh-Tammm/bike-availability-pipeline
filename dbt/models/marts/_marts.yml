@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: dim_stations
+    description: One row per bike-sharing station, all systems.
+    columns:
+      - name: station_key
+        description: system_id:station_uid. Primary key.
+        data_tests: [unique, not_null]
+
+  - name: fct_station_snapshots
+    description: One row per station per snapshot (UTC partitions), with shortage flags.
+    columns:
+      - name: snapshot_key
+        data_tests: [unique, not_null]
+      - name: station_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_stations')
+                field: station_key
+              config:
+                severity: warn  # a station can appear in availability before the daily station list
+
+  - name: mart_station_hourly_shortage
+    description: Shortage rates per station, day type and local hour. Use SUM(n_empty)/SUM(n_snapshots) to re-aggregate.
+    columns:
+      - name: local_hour
+        data_tests: [not_null]

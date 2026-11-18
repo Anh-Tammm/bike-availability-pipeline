@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: int_station_snapshots
+    description: Station snapshots from all systems in one shape, with local time.
+    columns:
+      - name: snapshot_key
+        data_tests: [unique, not_null]
+      - name: local_hour
+        data_tests: [not_null]

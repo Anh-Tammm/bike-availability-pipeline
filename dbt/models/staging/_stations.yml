@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: stg_youbike__stations
+    description: Latest attributes of each YouBike Hsinchu station.
+    columns: &station_columns
+      - name: station_key
+        description: system_id:station_uid. Primary key.
+        data_tests: [unique, not_null]
+      - name: station_name
+        data_tests: [not_null]
+      - name: capacity
+        data_tests: [not_null, non_negative]
+
+  - name: stg_velib__stations
+    description: Latest attributes of each Vélib' station.
+    columns: *station_columns
