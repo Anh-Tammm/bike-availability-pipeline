@@ -47,7 +47,12 @@ DBT_CMD = (
     start_date=datetime(2026, 11, 14, 5, tzinfo=timezone.utc),  # first collected files
     catchup=True,  # when Airflow restarts, every missed hour is loaded
     max_active_runs=4,
-    default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
+    default_args={
+        "retries": 4,
+        "retry_delay": timedelta(minutes=2),
+        "retry_exponential_backoff": True,   # 2, 4, 8, 16 min between attempts
+        "max_retry_delay": timedelta(minutes=30),
+    },
     tags=["raw", "bigquery", "dbt"],
     doc_md=__doc__,
 )
