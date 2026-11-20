@@ -1,5 +1,6 @@
 -- One row per station x day type (weekday/weekend) x local hour.
--- Stores additive counts (not only percentages) so the dashboard can re-aggregate correctly.
+-- Stores additive counts (not only percentages) so the dashboard can re-aggregate correctly:
+-- rate = SUM(n_empty) / SUM(n_snapshots), never AVG(pct_empty).
 
 select
     facts.station_key,
@@ -7,8 +8,14 @@ select
     stations.system_id,
     stations.city,
     stations.is_focus,
+    case
+        when stations.is_focus then 'NYCU campus'
+        when stations.city = 'Hsinchu' then 'Hsinchu (other stations)'
+        else stations.city
+    end                                         as station_group,
     stations.latitude,
     stations.longitude,
+    concat(cast(stations.latitude as string), ',', cast(stations.longitude as string)) as lat_lon,
     stations.capacity,
     if(facts.is_weekend, 'weekend', 'weekday')  as day_type,
     facts.local_hour,

@@ -28,3 +28,15 @@ models:
     columns:
       - name: local_hour
         data_tests: [not_null]
+
+  - name: mart_data_coverage
+    description: Period covered and sample size per system (for dashboard captions).
+    columns:
+      - name: system_id
+        data_tests: [unique, not_null]
+
+  - name: mart_focus_station_timeseries
+    description: NYCU focus stations, one row per snapshot (~20 min), local time.
+    columns:
+      - name: collected_at
+        data_tests: [not_null]
