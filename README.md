@@ -1,5 +1,7 @@
 # Bike Availability Pipeline
 
+![CI](https://github.com/Anh-Tammm/bike-availability-pipeline/actions/workflows/ci.yml/badge.svg)
+
 **Why can't I find a YouBike on my campus at 5 pm?**
 An end-to-end data pipeline that collects real-time bike-sharing availability, every few minutes, for **YouBike 2.0 in Hsinchu (Taiwan)** (and **Vélib' in Paris**), to measure where and when stations run out of bikes.
 
