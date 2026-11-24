@@ -11,4 +11,4 @@ COMMANDS = [
 ]
 
 if __name__ == "__main__":
-    sys.exit(max(subprocess.run(cmd).returncode for cmd in COMMANDS))
+    sys.exit(max(subprocess.run(cmd, check = False).returncode for cmd in COMMANDS))

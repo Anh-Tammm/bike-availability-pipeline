@@ -1,0 +1,13 @@
+# Ruff configuration (shared by local runs and CI)
+target-version = "py313"
+line-length = 120
+
+[lint]
+# E/W: style errors, F: real bugs (undefined names, unused imports),
+# I: import order, UP: modern Python, B: likely bugs, BLE/S110: swallowed exceptions,
+# PLW1510: subprocess.run without explicit check
+select = ["E4", "E7", "E9", "F", "W", "I", "UP", "B", "BLE", "S110", "PLW1510"]
+
+[lint.isort]
+# Our own module, imported by the collectors: first-party, not third-party
+known-first-party = ["common"]

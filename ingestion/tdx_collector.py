@@ -17,7 +17,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -50,7 +50,8 @@ def read_cache() -> dict | None:
             return json.loads(_gcs_blob().download_as_bytes())
         path = Path(TOKEN_CACHE)
         return json.loads(path.read_text()) if path.exists() else None
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - a broken cache must never stop the collection
+        log.warning("Token cache unreadable, a new token will be requested: %s", exc)
         return None
 
 
@@ -71,8 +72,8 @@ def clear_cache() -> None:
             _gcs_blob().delete()
         else:
             Path(TOKEN_CACHE).unlink(missing_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - best effort, the next run fetches a new token anyway
+        log.warning("Could not clear the token cache: %s", exc)
 
 log = logging.getLogger("tdx_collector")
 
@@ -125,7 +126,7 @@ def main() -> int:
     parser.add_argument("--local-dir", help="Write to this local folder instead of GCS (for testing)")
     args = parser.parse_args()
 
-    collected_at = datetime.now(timezone.utc)
+    collected_at = datetime.now(UTC)
     session = make_session(total_retries=2)  # failed calls may count against the quota
     try:
         token = get_token(session)

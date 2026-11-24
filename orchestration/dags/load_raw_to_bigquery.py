@@ -14,7 +14,7 @@ import gzip
 import io
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.latest_only import LatestOnlyOperator
@@ -44,7 +44,7 @@ DBT_CMD = (
 @dag(
     # Explicit hourly data intervals [HH:00, HH+1:00) in UTC, aligned with the hh= folders
     schedule=CronDataIntervalTimetable("0 * * * *", timezone="UTC"),
-    start_date=datetime(2026, 11, 14, 5, tzinfo=timezone.utc),  # first collected files
+    start_date=datetime(2026, 11, 14, 5, tzinfo=UTC),  # first collected files
     catchup=True,  # when Airflow restarts, every missed hour is loaded
     max_active_runs=4,
     default_args={
@@ -79,11 +79,11 @@ def load_raw_to_bigquery():
             return 0
 
         # Build one NDJSON line per file
-        loaded_at = datetime.now(timezone.utc).isoformat()
+        loaded_at = datetime.now(UTC).isoformat()
         lines = []
         for blob in blobs:
             name = blob.name.rsplit("/", 1)[-1]
-            collected_at = datetime.strptime(name, "%Y%m%dT%H%M%SZ.json.gz").replace(tzinfo=timezone.utc)
+            collected_at = datetime.strptime(name, "%Y%m%dT%H%M%SZ.json.gz").replace(tzinfo=UTC)
             lines.append(json.dumps({
                 "source_file": f"gs://{bucket}/{blob.name}",
                 "collected_at": collected_at.isoformat(),

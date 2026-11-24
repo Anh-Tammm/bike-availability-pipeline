@@ -9,7 +9,7 @@ import gzip
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 
@@ -52,7 +52,7 @@ def main() -> int:
     parser.add_argument("--local-dir", help="Write to this local folder instead of GCS (for testing)")
     args = parser.parse_args()
 
-    collected_at = datetime.now(timezone.utc)
+    collected_at = datetime.now(UTC)
     session = make_session()
     try:
         feeds = discover_feeds(session, SYSTEMS[args.system])
