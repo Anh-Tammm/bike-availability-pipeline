@@ -36,3 +36,4 @@ data/
 .DS_Store
 .vscode/
 logs/
+*:Zone.Identifier
