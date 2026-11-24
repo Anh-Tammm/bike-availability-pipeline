@@ -26,10 +26,10 @@ While on exchange at **NYCU** (National Yang Ming Chiao Tung University, Hsinchu
 *Data from 14 Nov 2026; figures computed on 19 Nov 2026 (4 weekdays observed). They are refreshed automatically as data accumulates; small samples, read as early indications.*
 
 - **The campus empties after classes.** On weekdays, bikes accumulate on campus in the morning (students ride in) and the stations empty between 4 pm and 8 pm, when everybody leaves at once. At 6 pm, a campus station is empty 44 % of the time.
-- - **Rebalancing trucks are visible, but not enough.** Snapshot-level data shows sudden jumps that riders alone cannot explain, e.g. +16 bikes at the Graduate Dormitory at 4 am. On both 18 and 19 Nov, a station was refilled around 4 pm (0 → 29 bikes in 20 min on 19 Nov) and was **empty again within about an hour**; from 5 pm to midnight, all four campus stations stayed between 0 and 5 bikes. *(Two days observed: a trend to confirm.)*
+- **Rebalancing trucks are visible, but not enough.** Snapshot-level data shows sudden jumps that riders alone cannot explain, e.g. +16 bikes at the Graduate Dormitory at 4 am. On both 18 and 19 Nov, a station was refilled around 4 pm (0 → 29 bikes in 20 min on 19 Nov) and was **empty again within about an hour**; from 5 pm to midnight, all four campus stations stayed between 0 and 5 bikes. *(Two days observed: a trend to confirm.)*
 - **Paris shows the opposite rhythm.** Shortages peak during office hours (9 am – 5 pm) in residential and hilly areas (Montmartre, 19th, 20th), a classic commuting pattern.
 
-| | Bikes per hour on campus (weekday vs weekend) | 19 Nov 2026 at NYCU, one point every 20 min |
+| Bikes per hour on campus (weekday vs weekend) | 19 Nov 2026 at NYCU, one point every 20 min |
 |---|---|
 | ![](docs/img/dashboard_nycu_stations.png) | ![](docs/img/dashboard_calendar_2026-11-19.png) |
 
@@ -69,6 +69,7 @@ flowchart LR
 | Warehouse | **BigQuery** | Partitioned and clustered tables |
 | Transformation | **dbt Core** | Staging → intermediate → marts, 40+ tests, source freshness |
 | Visualization | **Looker Studio** | Dashboard on the marts |
+| CI | **GitHub Actions** | On every push and pull request: `terraform fmt` + `validate`, Python lint (`ruff`), `dbt parse` |
 
 ---
 
@@ -108,6 +109,12 @@ There is no free official history for either source: the pipeline builds its own
 
 **Data quality:** `unique`, `not_null`, a custom generic test `non_negative`, `relationships`, singular tests (count consistency, raw vs facts completeness), and `dbt source freshness` on every run.
 
+### 4. Continuous integration (GitHub Actions)
+Every push and pull request on `main` runs three independent jobs, in about a minute, **without any cloud credentials**:
+- **Terraform**: `terraform fmt -check` and `terraform validate` (no backend, no cloud access).
+- **Python**: `ruff` lint on the collectors and the DAG (rules in `ruff.toml`, pinned version), then a syntax check.
+- **dbt**: `dbt parse`, which catches broken `ref()`, invalid YAML and Jinja errors before they reach Airflow.
+
 ---
 
 ## Design decisions
@@ -120,6 +127,7 @@ There is no free official history for either source: the pipeline builds its own
 | Additive counts in marts (`n_empty`, `n_snapshots`, …) | Rates are re-aggregated correctly in the BI tool (`SUM/SUM`), never by averaging percentages. |
 | 20-min sampling for YouBike | Fits the free TDX quota (~72 calls/day). More *days* matter more than more points per hour for this question. |
 | No service-account keys | Local tools use gcloud ADC; Cloud Run uses its service identity; the TDX secret lives in Secret Manager. Least-privilege IAM on each bucket and dataset. |
+| CI checks that need no credentials | Static checks catch most mistakes (syntax, broken references) at no cost and with no secret stored in GitHub. Deployment (CD) will authenticate with Workload Identity Federation, still without keys. |
 | No Nearline lifecycle rule | With many small files, per-object transition costs exceeded the storage savings. |
 
 ---
@@ -129,23 +137,26 @@ There is no free official history for either source: the pipeline builds its own
 - **Silent catch-up stall.** All Airflow indicators were green, but loading had stopped: a manual `dags test` run occupied the logical date of a scheduled run. Found by counting rows in BigQuery, not by the UI.
 - **DNS failures in Docker on WSL** made the worker unable to reach Google APIs for most of a day. Collection was unaffected (cloud), so no data was lost: failed runs were cleared and reloaded. Lessons: freshness checks do not detect *gaps* (hence the completeness test), and retries now use exponential backoff.
 - **A 403 that wasn't a permission problem**: a stale `GOOGLE_APPLICATION_CREDENTIALS` in `.bashrc` pointed to another project's service account. First question on a cloud 403: *who* am I authenticated as?
+- **A broken Terraform file was committed** (missing brace) and only noticed at the next `apply`. This is exactly what the CI now catches on every push.
 
 ---
 
 ## Cost
 
-Estimated **< $0.20 / month**: Cloud Scheduler (3 free jobs), Cloud Run Jobs and BigQuery within free tiers; a few cents of GCS storage and Secret Manager accesses. A GCP budget alert is set at €5, and every dbt query is capped (`maximum_bytes_billed`).
+Estimated **< $0.20 / month**: Cloud Scheduler (3 free jobs), Cloud Run Jobs and BigQuery within free tiers; a few cents of GCS storage and Secret Manager accesses. GitHub Actions is free for public repositories. A GCP budget alert is set at €5, and every dbt query is capped (`maximum_bytes_billed`).
 
 ---
 
 ## Repository structure
 
 ```
-terraform/       GCP infrastructure (GCS, BigQuery, IAM, Cloud Run, Scheduler, Secret Manager)
-ingestion/       Python collectors (GBFS, TDX) and their Dockerfile
-orchestration/   Airflow (Docker Compose, custom image with dbt) and the DAG
-dbt/             dbt project: sources, staging, intermediate, marts, seeds, tests, macros
-docs/            Dashboard setup and screenshots
+.github/workflows/  CI pipeline (Terraform, ruff, dbt parse)
+terraform/          GCP infrastructure (GCS, BigQuery, IAM, Cloud Run, Scheduler, Secret Manager)
+ingestion/          Python collectors (GBFS, TDX) and their Dockerfile
+orchestration/      Airflow (Docker Compose, custom image with dbt) and the DAG
+dbt/                dbt project: sources, staging, intermediate, marts, seeds, tests, macros
+docs/               Dashboard setup and screenshots
+ruff.toml           Python lint rules
 ```
 
 ---
@@ -180,6 +191,14 @@ cp orchestration/.env.example orchestration/.env               # fill in values
 cd orchestration && docker compose up airflow-init && docker compose up -d
 # UI: http://localhost:8080 — unpause load_raw_to_bigquery
 ```
+
+Run the CI checks locally before pushing (from the repo root):
+
+```bash
+terraform -chdir=terraform fmt -check -recursive
+ruff check ingestion orchestration/dags
+(cd dbt && dbt parse)
+```
 </details>
 
 ---
@@ -188,7 +207,11 @@ cd orchestration && docker compose up airflow-init && docker compose up -d
 
 - **Short history so far**: figures are early indications and will firm up with more weeks.
 - 20-min resolution for YouBike: truck arrivals are located within ±20 min.
-- Next: automatic detection of rebalancing events, a GCS → BigQuery completeness test, a "service day" starting at 4 am, CI (GitHub Actions: `terraform validate`, `dbt build`), and **Snowflake as a second dbt target**.
+- The CI runs static checks only: data tests (`dbt build`) run in Airflow, against real data.
+- Next:
+  - **CD**: build and push the collector image and update the Cloud Run Job automatically on merge, authenticated with Workload Identity Federation (no keys);
+  - **Snowflake as a second dbt target**;
+  - automatic detection of rebalancing events, a GCS → BigQuery completeness test, a "service day" starting at 4 am.
 
 ---
 
