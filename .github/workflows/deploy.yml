@@ -52,9 +52,16 @@ jobs:
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
           docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ingestion
           docker push --all-tags "${IMAGE}"
-
+      - name: Remember the image currently in production
+        id: current
+        run: |
+          echo "image=$(gcloud run jobs describe "${JOB}" --region "${REGION}" \
+            --format='value(spec.template.spec.template.spec.containers[0].image)')" >> "$GITHUB_OUTPUT"
       - name: Point the Cloud Run job to the new image
         run: gcloud run jobs update "${JOB}" --region "${REGION}" --image "${IMAGE}:${GITHUB_SHA}"
 
       - name: Smoke test (one real Vélib' collection)
-        run: gcloud run jobs execute "${JOB}" --region "${REGION}" --wait --args=REPLACE_ME
+        run: gcloud run jobs execute "${JOB}" --region "${REGION}" --wait --args=gbfs_collector.py,--system,velib,--feeds,station_status
+      - name: Roll back to the previous image
+        if: failure() && steps.current.outputs.image != ''
+        run: gcloud run jobs update "${JOB}" --region "${REGION}" --image "${{ steps.current.outputs.image }}"

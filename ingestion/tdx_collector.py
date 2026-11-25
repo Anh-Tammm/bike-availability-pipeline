@@ -110,9 +110,14 @@ def fetch_feed(session, token: str, city: str, feed: str) -> bytes:
     if resp.status_code == 401:
         clear_cache()  # force a fresh token on next run
     resp.raise_for_status()
-    payload = json.loads(resp.content)
+    try:
+        payload = json.loads(resp.content)
+    except ValueError:  # not JSON at all (e.g. an HTML maintenance page)
+        payload = None
     if not isinstance(payload, list) or not payload or "StationUID" not in payload[0]:
-        raise ValueError(f"Unexpected TDX payload from {url}")
+        raise ValueError(
+            f"Unexpected TDX payload from {url} (HTTP {resp.status_code}): {resp.text[:300]!r}"
+        )
     log.info("Fetched %s/%s: %d stations, %d bytes", city, feed, len(payload), len(resp.content))
     return resp.content
 
