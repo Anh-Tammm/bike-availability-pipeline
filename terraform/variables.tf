@@ -14,3 +14,8 @@ variable "github_repository" {
   type        = string
   default     = "Anh-Tammm/bike-availability-pipeline"
 }
+
+variable "alert_email" {
+  description = "Email address that receives pipeline alerts"
+  type        = string
+}
