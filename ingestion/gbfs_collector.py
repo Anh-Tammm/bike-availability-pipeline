@@ -44,7 +44,6 @@ def fetch_feed(session, url: str) -> bytes:
 
 
 def main() -> int:
-    raise RuntimeError("CD rollback test: this deployment must be refused")
     load_dotenv()
     setup_logging()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
