@@ -48,7 +48,9 @@ flowchart LR
         SM[Secret Manager] -.-> RUN
         RUN --> GCS[(GCS raw<br/>gzip JSON, dt=/hh=)]
         BQRAW[(BigQuery raw)] --> BQM[(BigQuery<br/>staging / marts)]
+        RUN -.->|failed run| MON[Cloud Monitoring<br/>email alert]
     end
+    GHA[GitHub Actions<br/>CI / CD] -.->|deploy image<br/>no keys, WIF| RUN
     subgraph Local[Docker Compose]
         AF[Airflow 3<br/>hourly DAG] --> DBT[dbt Core]
     end
@@ -69,7 +71,8 @@ flowchart LR
 | Warehouse | **BigQuery** | Partitioned and clustered tables |
 | Transformation | **dbt Core** | Staging → intermediate → marts, 40+ tests, source freshness |
 | Visualization | **Looker Studio** | Dashboard on the marts |
-| CI | **GitHub Actions** | On every push and pull request: `terraform fmt` + `validate`, Python lint (`ruff`), `dbt parse` |
+| CI / CD | **GitHub Actions**, **Workload Identity Federation** | CI on every push: `terraform validate`, `ruff`, `dbt parse`. CD: build, deploy and smoke-test the collector, with automatic rollback |
+| Monitoring | **Cloud Monitoring**, **Error Reporting** | Email alert when a collector run fails |
 
 ---
 
@@ -109,11 +112,25 @@ There is no free official history for either source: the pipeline builds its own
 
 **Data quality:** `unique`, `not_null`, a custom generic test `non_negative`, `relationships`, singular tests (count consistency, raw vs facts completeness), and `dbt source freshness` on every run.
 
-### 4. Continuous integration (GitHub Actions)
-Every push and pull request on `main` runs three independent jobs, in about a minute, **without any cloud credentials**:
+### 4. CI/CD (GitHub Actions)
+**CI** (`ci.yml`): every push and pull request on `main` runs three independent jobs, in about a minute, **without any cloud credentials**:
 - **Terraform**: `terraform fmt -check` and `terraform validate` (no backend, no cloud access).
 - **Python**: `ruff` lint on the collectors and the DAG (rules in `ruff.toml`, pinned version), then a syntax check.
 - **dbt**: `dbt parse`, which catches broken `ref()`, invalid YAML and Jinja errors before they reach Airflow.
+
+**CD** (`deploy.yml`): every push on `main` that changes `ingestion/` deploys the collector:
+1. `ruff` again: nothing is deployed if lint fails.
+2. Authentication with **Workload Identity Federation**: GitHub's signed OIDC token is exchanged for a short-lived GCP token. No key is stored in GitHub; only this repository, on `main`, can deploy, as a dedicated `github-deployer` account (push to this registry, update this job, nothing else).
+3. Image built and pushed, **tagged with the commit SHA** (rollback = point the job to an older SHA).
+4. Cloud Run Job updated, then a **smoke test**: one real Vélib' collection, which must succeed.
+5. If anything fails, **automatic rollback** to the previous image; the workflow stays red.
+
+Tested on purpose with a collector that crashes at start-up: lint passed, the smoke test failed, the previous image was restored about a minute later, and the alert email arrived.
+
+### 5. Monitoring
+- **Email alert** (Cloud Monitoring, log-based) as soon as a collector run exits with an error, at most one email per hour, with a short runbook in the message.
+- **Error Reporting** groups Python tracebacks automatically.
+- Validation errors include the start of the API response, so the cause is visible in the log itself.
 
 ---
 
@@ -127,7 +144,9 @@ Every push and pull request on `main` runs three independent jobs, in about a mi
 | Additive counts in marts (`n_empty`, `n_snapshots`, …) | Rates are re-aggregated correctly in the BI tool (`SUM/SUM`), never by averaging percentages. |
 | 20-min sampling for YouBike | Fits the free TDX quota (~72 calls/day). More *days* matter more than more points per hour for this question. |
 | No service-account keys | Local tools use gcloud ADC; Cloud Run uses its service identity; the TDX secret lives in Secret Manager. Least-privilege IAM on each bucket and dataset. |
-| CI checks that need no credentials | Static checks catch most mistakes (syntax, broken references) at no cost and with no secret stored in GitHub. Deployment (CD) will authenticate with Workload Identity Federation, still without keys. |
+| CI checks that need no credentials | Static checks catch most mistakes (syntax, broken references) at no cost and with no secret stored in GitHub. |
+| Terraform owns the job, CD owns the image | The Cloud Run Job is defined in Terraform, but its image version is set by the CD (`lifecycle { ignore_changes }`), so a later `terraform apply` never reverts a deployment. |
+| Reject empty API responses | An empty list is stored as nothing, not as "0 stations": the run fails loudly and triggers the alert. |
 | No Nearline lifecycle rule | With many small files, per-object transition costs exceeded the storage savings. |
 
 ---
@@ -138,20 +157,23 @@ Every push and pull request on `main` runs three independent jobs, in about a mi
 - **DNS failures in Docker on WSL** made the worker unable to reach Google APIs for most of a day. Collection was unaffected (cloud), so no data was lost: failed runs were cleared and reloaded. Lessons: freshness checks do not detect *gaps* (hence the completeness test), and retries now use exponential backoff.
 - **A 403 that wasn't a permission problem**: a stale `GOOGLE_APPLICATION_CREDENTIALS` in `.bashrc` pointed to another project's service account. First question on a cloud 403: *who* am I authenticated as?
 - **A broken Terraform file was committed** (missing brace) and only noticed at the next `apply`. This is exactly what the CI now catches on every push.
+- **TDX outage (25 Nov 2026, about 5 h).** From 07:20 to 12:40 Taiwan time, every TDX endpoint (all cities, station lists included) returned HTTP 200 with an empty list. The collector refused these responses, but nothing alerted: it was noticed by chance. The error message was improved to include the API response (deployed by the CD, which revealed `'[]'` on the first run), a minimal script ruled out the pipeline and the account (quota unused, no notice), and an email alert was added. The lost YouBike snapshots cannot be recovered: there is no upstream history.
+- **The first smoke test failed** (an unfinished argument was committed), but the job had already been updated: the smoke test detected the problem without preventing it. Hence the automatic rollback step.
 
 ---
 
 ## Cost
 
-Estimated **< $0.20 / month**: Cloud Scheduler (3 free jobs), Cloud Run Jobs and BigQuery within free tiers; a few cents of GCS storage and Secret Manager accesses. GitHub Actions is free for public repositories. A GCP budget alert is set at €5, and every dbt query is capped (`maximum_bytes_billed`).
+Estimated **< $0.30 / month**: Cloud Scheduler (3 free jobs), Cloud Run Jobs and BigQuery within free tiers; a few cents of GCS storage and Secret Manager accesses; $0.10 for the alerting condition. GitHub Actions is free for public repositories, and Artifact Registry keeps only the 5 latest images. A GCP budget alert is set at €5, and every dbt query is capped (`maximum_bytes_billed`).
 
 ---
 
 ## Repository structure
 
 ```
-.github/workflows/  CI pipeline (Terraform, ruff, dbt parse)
-terraform/          GCP infrastructure (GCS, BigQuery, IAM, Cloud Run, Scheduler, Secret Manager)
+.github/workflows/  CI (Terraform, ruff, dbt parse) and CD (collector deployment)
+terraform/          GCP infrastructure (GCS, BigQuery, IAM, Cloud Run, Scheduler, Secret Manager,
+                    Workload Identity Federation, alerting)
 ingestion/          Python collectors (GBFS, TDX) and their Dockerfile
 orchestration/      Airflow (Docker Compose, custom image with dbt) and the DAG
 dbt/                dbt project: sources, staging, intermediate, marts, seeds, tests, macros
@@ -173,14 +195,15 @@ Prerequisites: a GCP project with billing, `gcloud`, Terraform, Docker, Python 3
 gcloud auth login && gcloud auth application-default login
 
 # 2. Infrastructure
-cd terraform && cp terraform.tfvars.example terraform.tfvars   # set project_id
+cd terraform && cp terraform.tfvars.example terraform.tfvars   # set project_id and alert_email
 terraform init && terraform apply
 
 # 3. TDX credentials into Secret Manager
 printf '%s' "$TDX_CLIENT_ID"     | gcloud secrets versions add tdx-client-id --data-file=-
 printf '%s' "$TDX_CLIENT_SECRET" | gcloud secrets versions add tdx-client-secret --data-file=-
 
-# 4. Collector image (Cloud Run)
+# 4. First collector image (later versions are deployed by the CD on every push to ingestion/;
+#    in a fork, set github_repository and the two identifiers in deploy.yml)
 IMAGE=$(terraform output -raw collector_image)
 gcloud auth configure-docker europe-west1-docker.pkg.dev
 docker build -t "$IMAGE" ../ingestion && docker push "$IMAGE"
@@ -208,9 +231,11 @@ ruff check ingestion orchestration/dags
 - **Short history so far**: figures are early indications and will firm up with more weeks.
 - 20-min resolution for YouBike: truck arrivals are located within ±20 min.
 - The CI runs static checks only: data tests (`dbt build`) run in Airflow, against real data.
+- Only collector failures are alerted; Airflow and dbt failures are only visible in the Airflow UI.
+- The data depends on TDX availability: provider outages (like 25 Nov, or the announced maintenance of 27–30 Nov) leave gaps that cannot be filled.
 - Next:
-  - **CD**: build and push the collector image and update the Cloud Run Job automatically on merge, authenticated with Workload Identity Federation (no keys);
   - **Snowflake as a second dbt target**;
+  - alert on dbt test failures and on data gaps (from `mart_data_coverage`);
   - automatic detection of rebalancing events, a GCS → BigQuery completeness test, a "service day" starting at 4 am.
 
 ---
