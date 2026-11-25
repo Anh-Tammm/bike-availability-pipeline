@@ -8,3 +8,9 @@ variable "region" {
   type        = string
   default     = "europe-west1"
 }
+
+variable "github_repository" {
+  description = "GitHub repository allowed to deploy (owner/name)"
+  type        = string
+  default     = "Anh-Tammm/bike-availability-pipeline"
+}

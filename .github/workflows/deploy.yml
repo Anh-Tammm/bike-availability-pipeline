@@ -1,0 +1,60 @@
+name: Deploy collector
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ingestion/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: # manual "Run workflow" button in the Actions tab
+
+concurrency:
+  group: deploy-collector
+  cancel-in-progress: false # never interrupt a deployment halfway
+
+permissions:
+  contents: read
+  id-token: write # lets the job request a GitHub OIDC token (Workload Identity Federation)
+
+env:
+  REGION: europe-west1
+  JOB: collector
+  IMAGE: europe-west1-docker.pkg.dev/bike-pipeline-514606/bike-pipeline/collector
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install ruff==0.17.6
+      - run: ruff check ingestion
+
+  deploy:
+    needs: lint
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Authenticate to Google Cloud (no key)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/134752961252/locations/global/workloadIdentityPools/github/providers/github-oidc
+          service_account: github-deployer@bike-pipeline-514606.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Build and push the image
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" ingestion
+          docker push --all-tags "${IMAGE}"
+
+      - name: Point the Cloud Run job to the new image
+        run: gcloud run jobs update "${JOB}" --region "${REGION}" --image "${IMAGE}:${GITHUB_SHA}"
+
+      - name: Smoke test (one real Vélib' collection)
+        run: gcloud run jobs execute "${JOB}" --region "${REGION}" --wait --args=REPLACE_ME

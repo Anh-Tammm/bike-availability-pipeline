@@ -78,6 +78,14 @@ resource "google_cloud_run_v2_job" "collector" {
   }
 
   depends_on = [google_secret_manager_secret_iam_member.pipeline_tdx]
+  # Terraform owns the job; the CD pipeline owns the image version
+  lifecycle {
+    ignore_changes = [
+      template[0].template[0].containers[0].image,
+      client,
+      client_version,
+    ]
+  }
 }
 
 # ---------- Identity used by Cloud Scheduler to start the job ----------
